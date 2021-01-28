@@ -31,7 +31,7 @@ export  MCPModel, MCPData, ComplementarityType,
         @NLexpression, @expression,
         PATHSolver
 
-mpec_tol = 1e-8
+# mpec_tol = 1e-8
 
 
 include("mcp.jl")

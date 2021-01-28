@@ -36,8 +36,6 @@ function esc_variable(ex::Expr, parameters=Symbol[])
     return ex2
 end
 
-
-
 esc_nonconstant(x::Number) = x
 esc_nonconstant(x) = esc(x)
 complements_error(args, str) = error("In @complements($(join(args,","))): ", str)
@@ -51,8 +49,7 @@ function comparison_to_call(ex)
     end
 end
 
-
-function smooth(c1, c2)
+function smooth(c1, c2;mpec_tol = 1e-8)
     c1s = Expr(:call, :(^), c1, 2)
     c2s = Expr(:call, :(^), c2, 2)
     cs = Expr(:call, :(+), c1s, c2s, :($mpec_tol))
@@ -64,23 +61,20 @@ function smooth(c1, c2)
     return Expr(:call, :(==), cc, 0  )
 end
 
-function get_complementarity(c1, c2, method)
+function get_complementarity(c1, c2;method = :smooth,mpec_tol = 1e-8)
     if method == :smooth
-        expr = smooth(c1, c2)
+        expr = smooth(c1, c2;mpec_tol = :($mpec_tol))
     elseif method == :simple
         cc = Expr(:call, :(*), c1, c2)
         expr = Expr(:call, :(<=), cc, :($mpec_tol)  )
     else
-        expr = smooth(c1, c2)
+        expr = smooth(c1, c2;mpec_tol = :($mpec_tol))
     end
 
     return expr
 end
 
-
-
-
-macro complements(args...)
+macro complements(m,F,x,args...)
 
     # Currently supports
     #  F ⟂ lb <= x <= ub
@@ -95,14 +89,34 @@ macro complements(args...)
     # Many parts of this macro were copied from @variable of JuMP.jl
     # Thanks!
 
-    m = esc(args[1])
-    F = args[2]
-    x = args[3]
+    m = esc(m)
 
-    method = :smooth
-    mpec_tol = :(1e-8)
-    if length(args) > 3
-        method = args[4]
+    a_args = []
+    kw_args = Pair{Symbol,Any}[]
+    for el in args
+        if Meta.isexpr(el, :(=))
+            push!(kw_args, Pair(el.args...))
+        else
+            push!(a_args,el)
+        end
+    end
+    kw_args = filter(kw -> kw.first == :mpec_tol, kw_args)
+
+    #get the method
+    if length(a_args) > 0
+        method = a_args[1]
+        if isa(method,QuoteNode)
+            method = method.value
+        end
+    else
+        method = :simple
+    end
+
+    #get the mpec_tolerance
+    if !isempty(kw_args)
+        mpec_tol = kw_args[1].second
+    else
+        mpec_tol = 1e-8
     end
 
     ub_F = Inf
@@ -312,14 +326,14 @@ macro complements(args...)
 
         # v * (x - lb) = 0
         c1 = Expr(:call, :(-), var, lb_x)
-        expr = esc_variable(get_complementarity(c1, :v, method))
+        expr = esc_variable(get_complementarity(c1, :v, method = method,mpec_tol = mpec_tol))
         push!(code.args, quote
             @NLconstraint( $(m), $(expr) )
         end )
 
         # w * (ub - x) = 0
         c1 = Expr(:call, :(-), ub_x, var)
-        expr = esc_variable(get_complementarity(c1, :w, method))
+        expr = esc_variable(get_complementarity(c1, :w, method = method,mpec_tol = mpec_tol))
         push!(code.args, quote
             @NLconstraint( $(m), $(expr) )
         end )
@@ -327,7 +341,7 @@ macro complements(args...)
     elseif Fhaslb && xhaslb
         c1 = Expr(:call, :(-), var, lb_x)
         c2 = Expr(:call, :(-), func, lb_F)
-        expr = esc_variable(get_complementarity(c1, c2, method))
+        expr = esc_variable(get_complementarity(c1, c2, method = method,mpec_tol = mpec_tol))
         push!(code.args, quote
             @NLconstraint( $(m), $(expr) )
         end )
@@ -335,7 +349,7 @@ macro complements(args...)
     elseif Fhaslb && xhasub
         c1 = Expr(:call, :(-), ub_x, var)
         c2 = Expr(:call, :(-), func, lb_F)
-        expr = esc_variable(get_complementarity(c1, c2, method))
+        expr = esc_variable(get_complementarity(c1, c2, method = method,mpec_tol = mpec_tol))
         push!(code.args, quote
             @NLconstraint( $(m), $(expr) )
         end )
@@ -343,14 +357,14 @@ macro complements(args...)
     elseif Fhasub && xhaslb
         c1 = Expr(:call, :(-), var, lb_x)
         c2 = Expr(:call, :(-), ub_F, func)
-        expr = esc_variable(get_complementarity(c1, c2, method))
+        expr = esc_variable(get_complementarity(c1, c2, method = method,mpec_tol = mpec_tol))
         push!(code.args, quote
             @NLconstraint( $(m), $(expr) )
         end )
     elseif Fhasub && xhasub
         c1 = Expr(:call, :(-), ub_x, var)
         c2 = Expr(:call, :(-), ub_F, func)
-        expr = esc_variable(get_complementarity(c1, c2, method))
+        expr = esc_variable(get_complementarity(c1, c2, method = method,mpec_tol = mpec_tol))
         push!(code.args, quote
             @NLconstraint( $(m), $(expr) )
         end )
